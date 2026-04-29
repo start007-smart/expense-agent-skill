@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "required_binaries": [
+    {
+      "name": "node",
+      "min_version": "18.0.0",
+      "reason": "运行核心的 JS 接口执行脚本，需要原生 fetch 支持"
+    }
+  ]
+}
