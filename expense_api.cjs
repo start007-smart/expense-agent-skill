@@ -17,6 +17,13 @@ BASE_URL = BASE_URL.replace(/\/+$/, ''); // 清除末尾斜杠防拼接错误
 
 // 错误码约定
 const ERR_PROGRAMMATIC = -100;
+const ERR_FORBIDDEN = -403;
+
+const BLOCKED_METHODS = new Set(['DELETE', 'PUT', 'PATCH']);
+const DANGEROUS_API_PATTERNS = [
+  /(^|[/?&_.-])(delete|remove|destroy|drop|truncate|erase|purge|del)(?=$|[/?&_.=-])/i,
+  /(^|[/?&_.-])(nullify|void|cancel|revoke|withdraw|rollback)(?=$|[/?&_.=-])/i
+];
 
 // 简单的临时缓存文件，用于存 token，避免频繁调用 auth 接口
 const TOKEN_CACHE_FILE = path.join(__dirname, '.expense_token_cache.json');
@@ -32,6 +39,28 @@ function loadCredentials() {
     throw err;
   }
   return { appKey, appSecurity };
+}
+
+function forbidden(message) {
+  const err = new Error(message);
+  err.code = ERR_FORBIDDEN;
+  err.msg = message;
+  return err;
+}
+
+function assertSafeApiRequest(method, apiPath, bodyParams) {
+  const normalizedMethod = String(method || '').trim().toUpperCase();
+  if (BLOCKED_METHODS.has(normalizedMethod)) {
+    throw forbidden(`安全策略拒绝调用 ${normalizedMethod} 接口。当前 skill 只允许只读查询，不允许修改或删除数据。`);
+  }
+
+  const bodyText = bodyParams && Object.keys(bodyParams).length
+    ? JSON.stringify(bodyParams)
+    : '';
+  const inspectText = `${apiPath || ''}\n${bodyText}`;
+  if (DANGEROUS_API_PATTERNS.some((pattern) => pattern.test(inspectText))) {
+    throw forbidden('安全策略拒绝调用疑似删除、作废、撤销或回滚数据的接口。');
+  }
 }
 
 // 获取 Access Token
@@ -98,6 +127,8 @@ async function getAccessToken(appKey, appSecurity) {
 
 // 主业务请求函数
 async function expenseApi(method, apiPath, bodyParams) {
+  assertSafeApiRequest(method, apiPath, bodyParams);
+
   const { appKey, appSecurity } = loadCredentials();
   const token = await getAccessToken(appKey, appSecurity);
 
