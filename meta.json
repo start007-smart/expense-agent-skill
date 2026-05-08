@@ -6,5 +6,10 @@
       "min_version": "18.0.0",
       "reason": "运行核心的 JS 接口执行脚本，需要原生 fetch 支持"
     }
-  ]
+  ],
+  "commands": {
+    "preflight": "node preflight-check.cjs",
+    "local_bi_demo": "node expense_bi_demo.cjs company-summary '{\"month\":\"2026-05\"}'",
+    "test": "node tests/run-mock-tests.cjs"
+  }
 }

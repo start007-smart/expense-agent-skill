@@ -20,13 +20,18 @@ const ERR_PROGRAMMATIC = -100;
 const ERR_FORBIDDEN = -403;
 
 const BLOCKED_METHODS = new Set(['DELETE', 'PUT', 'PATCH']);
+const READONLY_METHODS = new Set(['GET', 'HEAD']);
+const READONLY_POST_PATHS = new Set([
+  // Open-source baseline has no confirmed read-only POST business endpoints.
+  // Add exact pathname strings here only after verifying the endpoint cannot write data.
+]);
 const DANGEROUS_API_PATTERNS = [
   /(^|[/?&_.-])(delete|remove|destroy|drop|truncate|erase|purge|del)(?=$|[/?&_.=-])/i,
   /(^|[/?&_.-])(nullify|void|cancel|revoke|withdraw|rollback)(?=$|[/?&_.=-])/i
 ];
 
 // 简单的临时缓存文件，用于存 token，避免频繁调用 auth 接口
-const TOKEN_CACHE_FILE = path.join(__dirname, '.expense_token_cache.json');
+const TOKEN_CACHE_FILE = process.env.EKUAIBAO_TOKEN_CACHE_FILE || path.join(__dirname, '.expense_token_cache.json');
 
 function loadCredentials() {
   const appKey = process.env.EKUAIBAO_APP_KEY;
@@ -48,19 +53,84 @@ function forbidden(message) {
   return err;
 }
 
-function assertSafeApiRequest(method, apiPath, bodyParams) {
+function programmatic(message) {
+  const err = new Error(message);
+  err.code = ERR_PROGRAMMATIC;
+  err.msg = message;
+  return err;
+}
+
+function getConfiguredBaseUrl() {
+  try {
+    return new URL(`${BASE_URL}/`);
+  } catch {
+    throw programmatic('EKUAIBAO_BASE_URL 不是合法的 URL。');
+  }
+}
+
+function normalizePathname(pathname) {
+  const normalized = String(pathname || '').replace(/\/+$/, '');
+  return normalized || '/';
+}
+
+function isAllowedReadonlyPost(targetUrl) {
+  return READONLY_POST_PATHS.has(normalizePathname(targetUrl.pathname));
+}
+
+function buildTargetUrl(apiPath) {
+  const rawPath = String(apiPath || '').trim();
+  if (!rawPath) {
+    throw programmatic('缺少 API_PATH。');
+  }
+
+  const baseUrl = getConfiguredBaseUrl();
+  let targetUrl;
+
+  try {
+    if (/^\/\//.test(rawPath)) {
+      throw forbidden('安全策略拒绝调用协议相对 URL。API 请求只能发往 EKUAIBAO_BASE_URL 配置的域名。');
+    }
+
+    if (/^[a-z][a-z0-9+.-]*:/i.test(rawPath)) {
+      targetUrl = new URL(rawPath);
+    } else {
+      targetUrl = new URL(rawPath.replace(/^\/+/, ''), baseUrl);
+    }
+  } catch (err) {
+    if (err.code) throw err;
+    throw programmatic('API_PATH 不是合法的 URL 或路径。');
+  }
+
+  if (targetUrl.origin !== baseUrl.origin) {
+    throw forbidden(`安全策略拒绝调用非配置域名：${targetUrl.origin}。API 请求只能发往 ${baseUrl.origin}。`);
+  }
+
+  return targetUrl;
+}
+
+function assertSafeApiRequest(method, targetUrl, bodyParams) {
   const normalizedMethod = String(method || '').trim().toUpperCase();
   if (BLOCKED_METHODS.has(normalizedMethod)) {
     throw forbidden(`安全策略拒绝调用 ${normalizedMethod} 接口。当前 skill 只允许只读查询，不允许修改或删除数据。`);
   }
 
+  if (normalizedMethod === 'POST' && !isAllowedReadonlyPost(targetUrl)) {
+    throw forbidden('安全策略拒绝调用未加入只读查询白名单的 POST 接口。当前 skill 不允许通过 POST 创建、提交、审批或修改数据。');
+  }
+
+  if (!READONLY_METHODS.has(normalizedMethod) && normalizedMethod !== 'POST') {
+    throw forbidden(`安全策略拒绝调用 ${normalizedMethod || 'UNKNOWN'} 接口。当前 skill 只允许 GET/HEAD 查询和已加入白名单的只读 POST 查询。`);
+  }
+
   const bodyText = bodyParams && Object.keys(bodyParams).length
     ? JSON.stringify(bodyParams)
     : '';
-  const inspectText = `${apiPath || ''}\n${bodyText}`;
+  const inspectText = `${targetUrl.pathname}${targetUrl.search}\n${bodyText}`;
   if (DANGEROUS_API_PATTERNS.some((pattern) => pattern.test(inspectText))) {
     throw forbidden('安全策略拒绝调用疑似删除、作废、撤销或回滚数据的接口。');
   }
+
+  return normalizedMethod;
 }
 
 // 获取 Access Token
@@ -127,13 +197,14 @@ async function getAccessToken(appKey, appSecurity) {
 
 // 主业务请求函数
 async function expenseApi(method, apiPath, bodyParams) {
-  assertSafeApiRequest(method, apiPath, bodyParams);
+  const targetUrl = buildTargetUrl(apiPath);
+  const normalizedMethod = assertSafeApiRequest(method, targetUrl, bodyParams);
 
   const { appKey, appSecurity } = loadCredentials();
   const token = await getAccessToken(appKey, appSecurity);
 
   const fetchConfig = {
-    method: method.toUpperCase(),
+    method: normalizedMethod,
     headers: {
       'Content-Type': 'application/json',
       'accessToken': token
@@ -144,12 +215,7 @@ async function expenseApi(method, apiPath, bodyParams) {
     fetchConfig.body = JSON.stringify(bodyParams || {});
   }
 
-  const targetUrl = new URL(
-    apiPath.startsWith('http') ? apiPath : `${BASE_URL}/${apiPath.replace(/^\//, '')}`
-  );
-  if (!targetUrl.searchParams.has('accessToken')) {
-    targetUrl.searchParams.set('accessToken', token);
-  }
+  targetUrl.searchParams.set('accessToken', token);
 
   const res = await fetch(targetUrl, fetchConfig);
   const respText = await res.text();

@@ -116,18 +116,32 @@ function assertIdentityInput(input) {
 
 function fetchAllStaffs() {
   const pageSize = 100;
-  const maxPages = 20;
+  const maxPages = Number(process.env.EKUAIBAO_STAFF_MAX_PAGES || 1000);
   const staffs = [];
+  let totalCount = null;
 
   for (let page = 0; page < maxPages; page += 1) {
     const start = page * pageSize;
     const data = runApi('GET', `api/openapi/v2/staffs?start=${start}&count=${pageSize}`);
     const items = Array.isArray(data.items) ? data.items : [];
+    const parsedCount = Number(data.count);
+
+    if (Number.isFinite(parsedCount) && parsedCount >= 0) {
+      totalCount = parsedCount;
+    }
+
     staffs.push(...items);
 
-    if (!items.length || (Number.isFinite(data.count) && staffs.length >= data.count)) {
+    if (!items.length || (totalCount !== null && staffs.length >= totalCount)) {
       break;
     }
+  }
+
+  if (totalCount !== null && staffs.length < totalCount) {
+    raise(
+      ERR_PROGRAMMATIC,
+      `人员列表分页未拉取完整：已获取 ${staffs.length}/${totalCount}。可调高 EKUAIBAO_STAFF_MAX_PAGES 后重试。`
+    );
   }
 
   return staffs;
@@ -202,6 +216,19 @@ function moneyText(money) {
   return `${money.standard}${money.standardUnit || ''}`;
 }
 
+function moneyValue(money) {
+  if (!money || money.standard === undefined || money.standard === null || money.standard === '') {
+    return null;
+  }
+
+  const value = Number(money.standard);
+  return Number.isFinite(value) ? value : null;
+}
+
+function moneyUnit(money) {
+  return money && money.standardUnit ? String(money.standardUnit) : '';
+}
+
 function sanitizeDoc(doc) {
   const form = doc.form || {};
   const amount = form.expenseMoney || form.payMoney || form.applyMoney || form.money;
@@ -217,6 +244,51 @@ function sanitizeDoc(doc) {
     rejectionCount: form.rejectionNum || '0',
     voucherStatus: form.voucherStatus || ''
   };
+}
+
+function docTimestamp(doc) {
+  const form = doc.form || {};
+  const values = [doc.updateTime, form.submitDate].map(Number).filter((value) => Number.isFinite(value));
+  return values.length ? Math.max(...values) : 0;
+}
+
+function summarizeDocs(docs) {
+  const items = Array.isArray(docs.items) ? docs.items : [];
+  const summary = {
+    total: docs.count || items.length,
+    returned: items.length,
+    byState: {},
+    byType: {},
+    amountByUnit: {},
+    rejectedCount: 0,
+    latestItems: items
+      .slice()
+      .sort((left, right) => docTimestamp(right) - docTimestamp(left))
+      .slice(0, 5)
+      .map(sanitizeDoc)
+  };
+
+  for (const doc of items) {
+    const form = doc.form || {};
+    const state = STATE_LABELS[doc.state] || doc.state || '未知状态';
+    const type = TYPE_LABELS[doc.formType] || doc.formType || '未知类型';
+    const amount = form.expenseMoney || form.payMoney || form.applyMoney || form.money;
+    const value = moneyValue(amount);
+    const unit = moneyUnit(amount) || '未标明币种';
+
+    summary.byState[state] = (summary.byState[state] || 0) + 1;
+    summary.byType[type] = (summary.byType[type] || 0) + 1;
+
+    if (value !== null) {
+      summary.amountByUnit[unit] = Number(((summary.amountByUnit[unit] || 0) + value).toFixed(2));
+    }
+
+    if (doc.state === 'rejected' || Number(form.rejectionNum || 0) > 0) {
+      summary.rejectedCount += 1;
+    }
+  }
+
+  return summary;
 }
 
 function clampCount(value) {
@@ -247,6 +319,16 @@ function buildDocsResult(scope, actor, subject, input) {
   };
 }
 
+function buildSummaryResult(actor, input) {
+  const docs = queryDocsByStaffId(actor.id, input.index, input.count || 100);
+
+  return {
+    scope: 'self',
+    actor: sanitizeStaff(actor),
+    summary: summarizeDocs(docs)
+  };
+}
+
 function printJson(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -257,6 +339,7 @@ function printHelp() {
     commands: {
       'resolve-staff': '解析员工身份，只返回脱敏员工摘要。',
       'my-docs': '查询本人单据。JSON 需提供 staffId/userId/email，或姓名 + 手机号后四位。',
+      'my-summary': '查询本人单据汇总，返回状态、类型、金额和最近单据摘要。',
       'staff-docs': '仅当 actor 和 target 是同一员工时允许查询；查他人需要升级版。',
       'company-docs': '企业级单据查询需要升级版接入合思角色/权限接口。'
     }
@@ -280,6 +363,12 @@ async function main() {
   if (command === 'my-docs') {
     const actor = resolveStaff(input);
     printJson(buildDocsResult('self', actor, actor, input));
+    return;
+  }
+
+  if (command === 'my-summary') {
+    const actor = resolveStaff(input);
+    printJson(buildSummaryResult(actor, input));
     return;
   }
 
