@@ -12,6 +12,7 @@ const BI_DEMO_SCRIPT = path.join(SKILL_DIR, 'expense_bi_demo.cjs');
 const QUERY_SCRIPT = path.join(SKILL_DIR, 'expense_query.cjs');
 const PREFLIGHT_SCRIPT = path.join(SKILL_DIR, 'preflight-check.cjs');
 const MOCK_FETCH_SCRIPT = path.join(__dirname, 'mock-fetch.cjs');
+const CORE_ENTRY = path.join(SKILL_DIR, 'core_loader.cjs');
 
 function parseJson(raw) {
   return JSON.parse(String(raw || '').trim());
@@ -46,6 +47,12 @@ async function main() {
   };
 
   try {
+    const core = require(CORE_ENTRY);
+    assert.strictEqual(core.CORE_VERSION, '0.1.0');
+    assert.strictEqual(typeof core.expenseApi, 'function');
+    assert.strictEqual(typeof core.assertSafeApiRequest, 'function');
+    assert.strictEqual(typeof core.sanitizeDoc, 'function');
+
     const preflight = parseJson(runNode(PREFLIGHT_SCRIPT, [], env).stdout);
     assert.strictEqual(preflight.ok, true);
     assert.strictEqual(preflight.checks.safetyGate.ok, true);

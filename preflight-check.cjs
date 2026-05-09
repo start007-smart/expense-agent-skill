@@ -9,6 +9,7 @@
 
 const { spawnSync } = require('child_process');
 const path = require('path');
+const { DEFAULT_BASE_URL } = require('./core_loader.cjs');
 
 const SKILL_DIR = __dirname;
 const API_SCRIPT = path.join(SKILL_DIR, 'expense_api.cjs');
@@ -62,7 +63,7 @@ function checkCredentials() {
 }
 
 function checkBaseUrl() {
-  const rawBaseUrl = process.env.EKUAIBAO_BASE_URL || 'https://app.ekuaibao.com';
+  const rawBaseUrl = process.env.EKUAIBAO_BASE_URL || DEFAULT_BASE_URL;
   try {
     const baseUrl = new URL(rawBaseUrl);
     const ok = baseUrl.protocol === 'https:' || baseUrl.hostname === 'localhost' || baseUrl.hostname === '127.0.0.1';
@@ -89,7 +90,7 @@ function runApiSafetyCase(method, apiPath, body = '{}') {
         ...process.env,
         EKUAIBAO_APP_KEY: '',
         EKUAIBAO_APP_SECURITY: '',
-        EKUAIBAO_BASE_URL: process.env.EKUAIBAO_BASE_URL || 'https://app.ekuaibao.com'
+        EKUAIBAO_BASE_URL: process.env.EKUAIBAO_BASE_URL || DEFAULT_BASE_URL
       }
     }
   );

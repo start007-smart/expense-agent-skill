@@ -1,0 +1,14 @@
+{
+  "version": "0.1.0",
+  "name": "hesi-openapi-core",
+  "exports": [
+    "auth/token client",
+    "read-only safety gate",
+    "staff and document sanitizers",
+    "document summaries"
+  ],
+  "distribution": {
+    "source": "独立维护源码目录",
+    "vendor_target": "各 skill 发布前同步到 vendor/hesi-openapi-core"
+  }
+}

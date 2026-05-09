@@ -10,6 +10,20 @@
   "commands": {
     "preflight": "node preflight-check.cjs",
     "local_bi_demo": "node expense_bi_demo.cjs company-summary '{\"month\":\"2026-05\"}'",
-    "test": "node tests/run-mock-tests.cjs"
+    "test": "node tests/run-mock-tests.cjs",
+    "sync_core": "node scripts/sync-core.cjs"
+  },
+  "core": {
+    "source_path": "../hesi-openapi-core",
+    "vendor_path": "vendor/hesi-openapi-core",
+    "loader": "core_loader.cjs",
+    "version": "0.1.0",
+    "exports": [
+      "auth/token client",
+      "read-only safety gate",
+      "staff and document sanitizers",
+      "document summaries"
+    ],
+    "reuse_policy": "独立 core 是唯一源码；单独发布 skill 前同步到 vendor/hesi-openapi-core。"
   }
 }
